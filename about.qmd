@@ -1,0 +1,13 @@
+---
+title: "About"
+toc: false
+---
+
+Hi, I'm **Geoffrey Barini** — I work on remote sensing and GeoAI, with a focus on
+geospatial large language models (GeoLLMs) for Earth observation.
+
+**Interests:** land-cover mapping · change detection · vision-language models for satellite imagery · GeoAI agents
+
+**Tools:** Python · Google Earth Engine · PyTorch · rasterio / xarray · QGIS · MapLibre
+
+📫 Contact: [email](mailto:barini@jkuat.ac.ke) · [GitHub](https://github.com/barini-onkundi)

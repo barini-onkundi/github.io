@@ -1,0 +1,6 @@
+/_site/
+/.quarto/
+.ipynb_checkpoints/
+__pycache__/
+*.tif
+*.tiff

@@ -1,0 +1,33 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "Geoffrey Barini"
+  description: "Remote sensing & GeoAI portfolio"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: projects.qmd
+        text: Projects
+      - href: about.qmd
+        text: About
+    right:
+      - icon: github
+        href: https://github.com/barini-onkundi
+  page-footer:
+    center: "© 2026 Geoffrey Barini · Built with Quarto"
+
+format:
+  html:
+    theme:
+      light: [cosmo, styles.scss]
+      dark: [darkly, styles.scss]
+    toc: true
+    code-fold: true
+    code-tools: true
+
+# Re-run notebooks only when they change (important once you add Python/Jupyter)
+execute:
+  freeze: auto

@@ -1,0 +1,22 @@
+---
+title: "Remote Sensing & GeoLLMs"
+subtitle: "Turning satellite imagery into answers — with Earth observation and geospatial language models."
+page-layout: full
+toc: false
+listing:
+  contents: projects
+  type: grid
+  sort: "date desc"
+  max-items: 3
+  fields: [image, title, description]
+---
+
+::: {.hero}
+I build pipelines that combine **satellite imagery**, **deep learning** and
+**geospatial LLMs** to map, monitor and ask questions about the planet.
+
+[See all projects](projects.qmd){.btn .btn-primary .btn-lg}
+[GitHub](https://github.com/barini-onkundi){.btn .btn-outline-secondary .btn-lg}
+:::
+
+## Featured work
