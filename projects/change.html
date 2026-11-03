@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What changed? GeoLLM change captioning</title>
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../lib/maplibre-gl.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="../assets/js/common.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="inner">
+    <a class="brand" href="../index.html">Portfolio</a>
+    <nav class="nav"><a href="geovqa.html">Ask the image</a><a href="change.html" class="active">What changed?</a><a href="embeddings.html">Search in words</a><a href="agent.html">Geospatial agent</a></nav>
+    <button class="theme-btn" type="button">☾</button>
+  </div></header>
+
+  <div class="proj-head">
+    <a class="back" href="../index.html#projects">Back to all projects</a>
+    <h1>What changed?</h1>
+    <p class="lede">Drag the slider to compare two years of Sentinel-2 imagery, then ask the model to write a change report: what changed, where, and how much.</p>
+    <span class="demo-note">Real Sentinel-2 cloudless mosaics. Reports and figures are demo outputs.</span>
+  </div>
+
+  <div class="workspace">
+    <div class="map compare" id="compare">
+      <div class="map-layer" id="map-before"></div>
+      <div class="map-layer" id="map-after"></div>
+      <div class="swipe-handle" id="handle" role="slider" tabindex="0" aria-label="Comparison slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+      <div class="year-tag left num" id="tag-before">2018</div>
+      <div class="year-tag right num" id="tag-after">2023</div>
+    </div>
+    <aside class="panel" aria-label="Change report">
+      <div class="panel-head">Change report</div>
+      <div class="panel-body">
+        <label class="field">Site
+          <select id="site"></select>
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+          <label class="field">Before <select id="y1"></select></label>
+          <label class="field">After <select id="y2"></select></label>
+        </div>
+        <button class="btn primary" id="gen" type="button" style="width:100%;justify-content:center">Write change report</button>
+        <div class="report" id="report" aria-live="polite" style="margin-top:1rem"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="proj-body">
+    <section>
+      <h2>Approach</h2>
+      <p>A Siamese encoder embeds the two dates. A change head produces a pixel-level change mask, and a language decoder turns the mask and both embeddings into a short report. Area figures come from the mask, not from the language model, so the numbers can be checked.</p>
+    </section>
+    <section>
+      <h2>Results</h2>
+      <table class="metrics">
+        <thead><tr><th>Model</th><th>Change F1</th><th>Caption CIDEr</th></tr></thead>
+        <tbody>
+          <tr><td>Pixel differencing</td><td>0.61</td><td>n/a</td></tr>
+          <tr><td>Change captioning baseline</td><td>0.74</td><td>1.12</td></tr>
+          <tr class="best"><td>Ours</td><td>0.83</td><td>1.36</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:.6rem">Placeholder numbers. Replace them with your evaluation.</p>
+    </section>
+    <section>
+      <h2>Data</h2>
+      <p>Imagery: <a href="https://s2maps.eu" target="_blank" rel="noopener">Sentinel-2 cloudless</a> annual mosaics by EOX IT Services GmbH, contains modified Copernicus Sentinel data. The 2016 mosaic is CC BY 4.0, later years are CC BY-NC-SA 4.0 (fine for a non-commercial portfolio).</p>
+    </section>
+  </div>
+  <footer class="site-footer">Sentinel-2 cloudless by EOX IT Services GmbH (contains modified Copernicus Sentinel data).</footer>
+
+  <script src="../lib/maplibre-gl.js"></script>
+  <script>
+  const YEARS = [2018, 2019, 2020, 2021, 2022, 2023];
+  const SITES = [
+    { name: "Blue Nile reservoir, Ethiopia", center: [35.12, 11.05], zoom: 9.2,
+      report: (a, b) => `Between ${a} and ${b}, a large reservoir appears behind the dam on the Blue Nile. Flooded valleys extend more than 100 km upstream in a branching, dendritic pattern that follows the old river channels. Woodland and cropland on the valley floors are now under water. The dam wall and spillway are visible at the north-western end.`,
+      stats: [["Water area before", "~40 km²"], ["Water area after", "~1,600 km²"], ["Main change", "Land → water"]] },
+    { name: "Eko Atlantic, Lagos", center: [3.405, 6.415], zoom: 13.4,
+      report: (a, b) => `Between ${a} and ${b}, reclaimed land on the Atlantic shoreline has been subdivided into a regular street grid, and new high-rise footprints appear in the northern blocks. The sand surface shrinks as roads and buildings replace it. The coastline itself is stable, held by the sea wall to the south.`,
+      stats: [["New built-up area", "~1.9 km²"], ["Bare sand lost", "~2.4 km²"], ["Main change", "Bare → built-up"]] },
+    { name: "Nairobi, Kenya", center: [36.85, -1.30], zoom: 12.2,
+      report: (a, b) => `Between ${a} and ${b}, a new elevated road corridor runs south-east from the city centre towards the airport, visible as a continuous bright line along the existing highway. Infill construction is spread across the eastern suburbs, and several large green plots have been cleared for development.`,
+      stats: [["New built-up area", "~6.8 km²"], ["Vegetation lost", "~4.1 km²"], ["Main change", "Vegetation → built-up"]] }
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  $("site").innerHTML = SITES.map((s, i) => `<option value="${i}">${s.name}</option>`).join("");
+  $("y1").innerHTML = YEARS.map((y) => `<option ${y === 2018 ? "selected" : ""}>${y}</option>`).join("");
+  $("y2").innerHTML = YEARS.map((y) => `<option ${y === 2023 ? "selected" : ""}>${y}</option>`).join("");
+
+  const s0 = SITES[0];
+  const opts = (y, el) => ({ container: el, style: rasterStyle(BASEMAPS.s2(y)), center: s0.center, zoom: s0.zoom, maxZoom: 16, attributionControl: el === "map-after" ? { compact: true } : false });
+  const before = new maplibregl.Map(opts(2018, "map-before"));
+  const after = new maplibregl.Map(opts(2023, "map-after"));
+  after.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  after.addControl(new maplibregl.ScaleControl(), "bottom-left");
+
+  // keep both maps in step
+  let syncing = false;
+  function sync(src, dst) {
+    src.on("move", () => { if (syncing) return; syncing = true; dst.jumpTo({ center: src.getCenter(), zoom: src.getZoom(), bearing: src.getBearing(), pitch: src.getPitch() }); syncing = false; });
+  }
+  sync(before, after); sync(after, before);
+
+  // swipe handle
+  const box = $("compare"), handle = $("handle"), afterEl = $("map-after");
+  let pct = 50;
+  function setSwipe(p) {
+    pct = Math.max(0, Math.min(100, p));
+    handle.style.left = `calc(${pct}% - 2px)`;
+    afterEl.style.clipPath = `inset(0 0 0 ${pct}%)`;
+    handle.setAttribute("aria-valuenow", Math.round(pct));
+  }
+  setSwipe(50);
+  let dragging = false;
+  handle.addEventListener("pointerdown", (e) => { dragging = true; handle.setPointerCapture(e.pointerId); });
+  handle.addEventListener("pointermove", (e) => { if (!dragging) return; const r = box.getBoundingClientRect(); setSwipe(((e.clientX - r.left) / r.width) * 100); });
+  handle.addEventListener("pointerup", () => (dragging = false));
+  handle.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") setSwipe(pct - 5); if (e.key === "ArrowRight") setSwipe(pct + 5); });
+
+  function setYear(map, y, tag) {
+    if (map.getLayer("base")) map.removeLayer("base");
+    if (map.getSource("base")) map.removeSource("base");
+    map.addSource("base", BASEMAPS.s2(y));
+    map.addLayer({ id: "base", type: "raster", source: "base" });
+    $(tag).textContent = y;
+    $("report").innerHTML = "";
+  }
+  $("y1").addEventListener("change", (e) => setYear(before, +e.target.value, "tag-before"));
+  $("y2").addEventListener("change", (e) => setYear(after, +e.target.value, "tag-after"));
+  $("site").addEventListener("change", (e) => {
+    const s = SITES[e.target.value];
+    after.flyTo({ center: s.center, zoom: s.zoom, duration: reducedMotion ? 0 : 3000 });
+    $("report").innerHTML = "";
+  });
+
+  $("gen").addEventListener("click", async () => {
+    const s = SITES[$("site").value], a = +$("y1").value, b = +$("y2").value;
+    const r = $("report");
+    if (a >= b) { r.innerHTML = `<p>Pick a "before" year that is earlier than the "after" year.</p>`; return; }
+    r.innerHTML = `<div class="stat-row">${s.stats.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join("")}</div><p></p>`;
+    await typeInto(r.querySelector("p"), s.report(a, b));
+  });
+  </script>
+</body>
+</html>

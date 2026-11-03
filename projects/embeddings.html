@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search the archive in words: image–text embeddings</title>
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="../assets/js/common.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="inner">
+    <a class="brand" href="../index.html">Portfolio</a>
+    <nav class="nav"><a href="geovqa.html">Ask the image</a><a href="change.html">What changed?</a><a href="embeddings.html" class="active">Search in words</a><a href="agent.html">Geospatial agent</a></nav>
+    <button class="theme-btn" type="button">☾</button>
+  </div></header>
+
+  <div class="proj-head">
+    <a class="back" href="../index.html#projects">Back to all projects</a>
+    <h1>Search the archive in words</h1>
+    <p class="lede">Every dot is a 64 × 64 px Sentinel-2 chip, placed by its image–text embedding (UMAP). Type a description to find matching scenes, or click a dot to see its chip and generated caption.</p>
+    <span class="demo-note">Synthetic embeddings and chips. Export your own as JSON to replace them.</span>
+  </div>
+
+  <div class="workspace">
+    <div class="map" style="background:var(--paper)"><div id="scatter" role="img" aria-label="Scatter plot of image embeddings coloured by land-cover class"></div></div>
+    <aside class="panel" aria-label="Text search">
+      <div class="panel-head">Find scenes by description</div>
+      <div class="panel-body">
+        <form class="ask" id="search-form">
+          <input id="query" placeholder="e.g. river through farmland" aria-label="Describe a scene" autocomplete="off">
+          <button class="btn primary" type="submit">Search</button>
+        </form>
+        <div class="suggest" id="suggest" style="margin-top:.6rem"></div>
+        <div id="results" aria-live="polite"></div>
+        <div id="detail" class="chip-detail" style="margin-top:1rem"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="proj-body">
+    <section>
+      <h2>Approach</h2>
+      <p>A dual encoder (image and text) is trained contrastively on Sentinel-2 chips paired with captions generated from land-cover labels and OpenStreetMap tags. Search ranks chips by cosine similarity between the text query and each image embedding. The 2D layout is a UMAP projection, used only for display.</p>
+    </section>
+    <section>
+      <h2>Results</h2>
+      <table class="metrics">
+        <thead><tr><th>Model</th><th>Recall@10</th><th>Zero-shot acc.</th></tr></thead>
+        <tbody>
+          <tr><td>CLIP ViT-B/16</td><td>0.31</td><td>0.52</td></tr>
+          <tr><td>RemoteCLIP</td><td>0.48</td><td>0.71</td></tr>
+          <tr class="best"><td>Ours</td><td>0.57</td><td>0.79</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:.6rem">Placeholder numbers. Replace them with your evaluation.</p>
+    </section>
+    <section>
+      <h2>Use your own embeddings</h2>
+      <p>Export a list of <code>{x, y, cls, caption}</code> objects from Python (UMAP of your embeddings), and replace the <code>POINTS</code> array in this page with it.</p>
+    </section>
+  </div>
+  <footer class="site-footer">Class names follow the EuroSAT land-cover classes.</footer>
+
+  <script src="../lib/plotly.min.js"></script>
+  <script>
+  const CLASSES = [
+    { id: "AnnualCrop", label: "Annual crop", c: "#d4a72c", at: [2, 3] },
+    { id: "PermanentCrop", label: "Permanent crop", c: "#8f6b2e", at: [3.6, 4.8] },
+    { id: "Pasture", label: "Pasture", c: "#9bc25a", at: [0.8, 5.4] },
+    { id: "HerbaceousVegetation", label: "Herbaceous veg.", c: "#5f9e57", at: [-0.8, 3.6] },
+    { id: "Forest", label: "Forest", c: "#2f6b3a", at: [-2.6, 5.6] },
+    { id: "Residential", label: "Residential", c: "#c2364f", at: [5.2, -0.8] },
+    { id: "Industrial", label: "Industrial", c: "#7d4e9e", at: [7, -2.7] },
+    { id: "Highway", label: "Highway", c: "#6b7785", at: [4, -3.4] },
+    { id: "River", label: "River", c: "#3d8fc4", at: [-1.2, -2.1] },
+    { id: "SeaLake", label: "Sea / lake", c: "#1d4f7a", at: [-3.4, -4.2] }
+  ];
+  const CAPTIONS = {
+    AnnualCrop: ["Rectangular crop fields in alternating bare and green strips", "Patchwork of harvested and growing cereal fields", "Irrigated cropland with straight field boundaries"],
+    PermanentCrop: ["Orchard rows with regular tree spacing", "Vineyard terraces on a gentle slope", "Plantation with evenly spaced tree crowns"],
+    Pasture: ["Open grazing land with scattered hedgerows", "Uniform green meadow with few trees", "Pasture fields divided by tree lines"],
+    HerbaceousVegetation: ["Shrubland and grass with patchy texture", "Natural grassland with scattered bushes", "Mixed herbaceous cover on rolling terrain"],
+    Forest: ["Dense closed-canopy forest", "Coniferous forest with a dark, even texture", "Woodland with a small clearing"],
+    Residential: ["Dense residential blocks with small gardens", "Suburban houses along curving streets", "Mixed housing and narrow roads"],
+    Industrial: ["Large warehouse roofs and parking lots", "Industrial park with bright flat roofs", "Factory buildings beside a rail yard"],
+    Highway: ["Multi-lane highway crossing farmland", "Motorway interchange with ramps", "Highway cutting through mixed land cover"],
+    River: ["Meandering river with riparian vegetation", "River channel between agricultural fields", "Braided river with sand bars"],
+    SeaLake: ["Open water with a smooth dark surface", "Lake shoreline with adjacent woodland", "Coastal water with faint wave texture"]
+  };
+  const SYN = {
+    water: { SeaLake: 1, River: .8 }, river: { River: 1, SeaLake: .3 }, stream: { River: 1 }, lake: { SeaLake: 1, River: .3 }, sea: { SeaLake: 1 }, coast: { SeaLake: 1, Residential: .2 }, ocean: { SeaLake: 1 },
+    forest: { Forest: 1, HerbaceousVegetation: .3 }, trees: { Forest: 1, PermanentCrop: .4 }, woodland: { Forest: 1 },
+    crop: { AnnualCrop: 1, PermanentCrop: .6 }, crops: { AnnualCrop: 1, PermanentCrop: .6 }, farm: { AnnualCrop: 1, PermanentCrop: .6, Pasture: .5 }, farmland: { AnnualCrop: 1, Pasture: .5 }, field: { AnnualCrop: .9, Pasture: .6 }, fields: { AnnualCrop: .9, Pasture: .6 }, agriculture: { AnnualCrop: 1, PermanentCrop: .7 },
+    orchard: { PermanentCrop: 1 }, vineyard: { PermanentCrop: 1 }, plantation: { PermanentCrop: 1, Forest: .3 },
+    grass: { Pasture: 1, HerbaceousVegetation: .8 }, pasture: { Pasture: 1 }, grazing: { Pasture: 1 }, meadow: { Pasture: 1, HerbaceousVegetation: .5 },
+    shrub: { HerbaceousVegetation: 1 }, savanna: { HerbaceousVegetation: 1, Pasture: .4 }, vegetation: { HerbaceousVegetation: 1, Forest: .5, Pasture: .5 }, green: { Pasture: .7, Forest: .7, HerbaceousVegetation: .7 },
+    city: { Residential: 1, Industrial: .6, Highway: .3 }, urban: { Residential: 1, Industrial: .7 }, houses: { Residential: 1 }, housing: { Residential: 1 }, residential: { Residential: 1 }, buildings: { Residential: .9, Industrial: .8 }, town: { Residential: 1 },
+    factory: { Industrial: 1 }, industrial: { Industrial: 1 }, warehouse: { Industrial: 1 }, port: { Industrial: .8, SeaLake: .4 },
+    road: { Highway: 1, Residential: .2 }, highway: { Highway: 1 }, motorway: { Highway: 1 }, bridge: { Highway: .8, River: .6 }
+  };
+
+  // ---- synthetic embeddings ----
+  const rand = rng(42);
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rand(); while (!v) v = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const POINTS = [];
+  CLASSES.forEach((k, ci) => {
+    const ang = rand() * Math.PI, sx = 0.6 + rand() * 0.5, sy = 0.35 + rand() * 0.35;
+    for (let i = 0; i < 180; i++) {
+      const a = gauss() * sx, b = gauss() * sy;
+      POINTS.push({ x: k.at[0] + a * Math.cos(ang) - b * Math.sin(ang), y: k.at[1] + a * Math.sin(ang) + b * Math.cos(ang), ci, seed: ci * 1000 + i,
+        caption: CAPTIONS[k.id][i % 3] });
+    }
+  });
+
+  // ---- procedural "Sentinel-2 chip" textures ----
+  function drawChip(cv, ci, seed) {
+    const S = 64; cv.width = S; cv.height = S;
+    const g = cv.getContext("2d"), r = rng(seed), id = CLASSES[ci].id;
+    const fill = (c) => { g.fillStyle = c; g.fillRect(0, 0, S, S); };
+    const speck = (cols, n, sz) => { for (let i = 0; i < n; i++) { g.fillStyle = cols[(r() * cols.length) | 0]; g.fillRect(r() * S, r() * S, sz * (0.5 + r()), sz * (0.5 + r())); } };
+    if (id === "AnnualCrop") { const cols = ["#b8a165", "#7f9a4c", "#cdb98a", "#5d7f3a", "#a58e5a"]; g.save(); g.translate(S / 2, S / 2); g.rotate(r() * 0.6 - 0.3); for (let y = -S; y < S; y += 8 + r() * 6) for (let x = -S; x < S; x += 14 + r() * 10) { g.fillStyle = cols[(r() * cols.length) | 0]; g.fillRect(x, y, 15, 10); } g.restore(); }
+    else if (id === "PermanentCrop") { fill("#9a8a5c"); g.fillStyle = "#4f6b34"; for (let y = 2; y < S; y += 5) for (let x = 2 + (y % 10 ? 2 : 0); x < S; x += 5) { g.beginPath(); g.arc(x, y, 1.6, 0, 7); g.fill(); } }
+    else if (id === "Pasture") { fill("#88a957"); speck(["#7a9c4b", "#97b866", "#6e8f43"], 160, 4); g.strokeStyle = "#3f5f2c"; g.lineWidth = 2; g.beginPath(); g.moveTo(0, 20 + r() * 20); g.lineTo(S, 30 + r() * 20); g.stroke(); }
+    else if (id === "HerbaceousVegetation") { fill("#8c9a62"); speck(["#6f7f48", "#a6a873", "#59693a", "#b4a77a"], 260, 3); }
+    else if (id === "Forest") { fill("#25472b"); speck(["#1f3d24", "#2f5733", "#173019", "#3a6339"], 320, 3); }
+    else if (id === "Residential") { fill("#8d8a80"); for (let i = 0; i < 70; i++) { g.fillStyle = ["#b6a99a", "#a24d3c", "#d1cbc0", "#6f7d58"][(r() * 4) | 0]; g.fillRect(r() * S, r() * S, 4 + r() * 4, 4 + r() * 4); } g.strokeStyle = "#c9c4b8"; g.lineWidth = 1.5; for (let i = 0; i < 4; i++) { g.beginPath(); g.moveTo(0, r() * S); g.lineTo(S, r() * S); g.stroke(); } }
+    else if (id === "Industrial") { fill("#7b7a76"); for (let i = 0; i < 9; i++) { g.fillStyle = ["#d9dcdf", "#aab3b9", "#c9c2b3", "#5a6066"][(r() * 4) | 0]; g.fillRect(r() * S, r() * S, 10 + r() * 16, 8 + r() * 14); } }
+    else if (id === "Highway") { fill("#7f9150"); speck(["#93a560", "#6d7f45", "#a99a6a"], 120, 6); g.strokeStyle = "#cfcfca"; g.lineWidth = 5; g.beginPath(); g.moveTo(0, r() * S); g.bezierCurveTo(S / 3, r() * S, S / 1.5, r() * S, S, r() * S); g.stroke(); }
+    else if (id === "River") { fill("#7d944f"); speck(["#6a8243", "#93a663"], 120, 5); g.strokeStyle = "#2e5f7e"; g.lineWidth = 6 + r() * 4; g.beginPath(); g.moveTo(r() * S, 0); g.bezierCurveTo(r() * S, S / 3, r() * S, S / 1.5, r() * S, S); g.stroke(); }
+    else { fill("#173a5a"); speck(["#1b4466", "#14324f", "#20507a"], 140, 5); if (r() < 0.5) { g.fillStyle = "#4b6b3a"; g.beginPath(); g.moveTo(0, 0); g.lineTo(S * r(), 0); g.lineTo(0, S * r()); g.fill(); } }
+  }
+
+  // ---- plot ----
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  let highlighted = null;
+  function traces() {
+    return CLASSES.map((k, ci) => {
+      const pts = POINTS.map((p, i) => ({ ...p, i })).filter((p) => p.ci === ci);
+      return {
+        type: "scattergl", mode: "markers", name: k.label,
+        x: pts.map((p) => p.x), y: pts.map((p) => p.y), customdata: pts.map((p) => p.i),
+        text: pts.map((p) => p.caption), hovertemplate: "%{text}<extra>" + k.label + "</extra>",
+        marker: {
+          color: k.c, size: pts.map((p) => (highlighted && highlighted.has(p.i) ? 11 : 6)),
+          opacity: highlighted ? pts.map((p) => (highlighted.has(p.i) ? 1 : 0.12)) : 0.8,
+          line: { width: pts.map((p) => (highlighted && highlighted.has(p.i) ? 1.5 : 0)), color: css("--ink") }
+        }
+      };
+    });
+  }
+  function layout() {
+    return {
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      font: { family: css("--font"), color: css("--ink") },
+      margin: { l: 10, r: 10, t: 10, b: 10 }, showlegend: false, dragmode: "pan", hovermode: "closest",
+      xaxis: { visible: false }, yaxis: { visible: false, scaleanchor: "x" }
+    };
+  }
+  const plot = document.getElementById("scatter");
+  Plotly.newPlot(plot, traces(), layout(), { responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ["select2d", "lasso2d", "toImage"] });
+  const redraw = () => Plotly.react(plot, traces(), layout());
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  plot.on("plotly_click", (ev) => showDetail(ev.points[0].customdata));
+
+  document.getElementById("legend").innerHTML = CLASSES.map((k) => `<span><i style="background:${k.c}"></i>${k.label}</span>`).join("");
+
+  function showDetail(i) {
+    const p = POINTS[i], k = CLASSES[p.ci];
+    const d = document.getElementById("detail");
+    d.innerHTML = `<h3 style="margin:0 0 .4rem">Chip #${i}</h3><canvas></canvas><p style="margin:.5rem 0 0">${esc(p.caption)}</p><p class="muted" style="font-size:.9rem">Class: ${k.label}. Embedding at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}).</p>`;
+    drawChip(d.querySelector("canvas"), p.ci, p.seed);
+  }
+
+  function search(q) {
+    const words = q.toLowerCase().match(/[a-z]+/g) || [];
+    const w = {};
+    words.forEach((t) => Object.entries(SYN[t] || SYN[t.replace(/s$/, "")] || {}).forEach(([c, v]) => (w[c] = (w[c] || 0) + v)));
+    const res = document.getElementById("results");
+    if (!Object.keys(w).length) {
+      highlighted = null; redraw();
+      res.innerHTML = `<p class="muted" style="margin-top:.8rem">No matches for “${esc(q)}”. Try words like river, forest, farmland, city or highway.</p>`;
+      return;
+    }
+    const r = rng(words.join("").length * 7 + 1);
+    const scored = POINTS.map((p, i) => {
+      const k = CLASSES[p.ci], d2 = (p.x - k.at[0]) ** 2 + (p.y - k.at[1]) ** 2;
+      return { i, s: (w[k.id] || 0) * Math.exp(-d2 / 6) + r() * 0.35 };
+    }).sort((a, b) => b.s - a.s);
+    const top = scored.slice(0, 40);
+    highlighted = new Set(top.map((t) => t.i)); redraw();
+    res.innerHTML = `<h3 style="margin:1rem 0 .2rem;font-size:1rem">Top 12 of 40 matches</h3><div class="chip-grid"></div>`;
+    const grid = res.querySelector(".chip-grid");
+    top.slice(0, 12).forEach((t) => {
+      const cv = document.createElement("canvas");
+      cv.title = POINTS[t.i].caption; cv.setAttribute("role", "button"); cv.tabIndex = 0;
+      cv.setAttribute("aria-label", `Chip ${t.i}: ${POINTS[t.i].caption}, similarity ${Math.min(0.99, t.s).toFixed(2)}`);
+      drawChip(cv, POINTS[t.i].ci, POINTS[t.i].seed);
+      cv.addEventListener("click", () => showDetail(t.i));
+      cv.addEventListener("keydown", (e) => { if (e.key === "Enter") showDetail(t.i); });
+      grid.appendChild(cv);
+    });
+    showDetail(top[0].i);
+  }
+  const SUGG = ["river through farmland", "dense forest", "city buildings", "orchard rows", "coastal water", "highway"];
+  document.getElementById("suggest").innerHTML = SUGG.map((s) => `<button type="button">${s}</button>`).join("");
+  document.getElementById("suggest").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { document.getElementById("query").value = b.textContent; search(b.textContent); } });
+  document.getElementById("search-form").addEventListener("submit", (e) => { e.preventDefault(); search(document.getElementById("query").value); });
+  </script>
+</body>
+</html>

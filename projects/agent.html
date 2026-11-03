@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A geospatial agent: LLM tool use for GIS</title>
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../lib/maplibre-gl.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="../assets/js/common.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="inner">
+    <a class="brand" href="../index.html">Portfolio</a>
+    <nav class="nav"><a href="geovqa.html">Ask the image</a><a href="change.html">What changed?</a><a href="embeddings.html">Search in words</a><a href="agent.html" class="active">Geospatial agent</a></nav>
+    <button class="theme-btn" type="button">☾</button>
+  </div></header>
+
+  <div class="proj-head">
+    <a class="back" href="../index.html#projects">Back to all projects</a>
+    <h1>A geospatial agent</h1>
+    <p class="lede">Ask an analysis question in plain language. The agent plans the steps, calls GIS tools one at a time, and builds the map as it goes.</p>
+    <span class="demo-note">Replayed agent traces over Kisumu with simplified geometries. Connect your agent's API to run it live.</span>
+  </div>
+
+  <div class="workspace">
+    <div class="map" id="map"></div>
+    <aside class="panel" aria-label="Agent">
+      <div class="panel-head">Ask the agent</div>
+      <div class="panel-body">
+        <div class="suggest" id="suggest"></div>
+        <form class="ask" id="ask" style="margin-bottom:1rem">
+          <input id="q" placeholder="Describe an analysis" aria-label="Analysis question" autocomplete="off">
+          <button class="btn primary" type="submit">Run</button>
+        </form>
+        <ol class="trace" id="trace" aria-live="polite"></ol>
+        <div id="answer"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="proj-body">
+    <section>
+      <h2>Approach</h2>
+      <p>An instruction-tuned LLM gets a typed tool catalogue (geocoding, STAC search, raster algebra, vector overlay, routing) and returns JSON tool calls. A sandboxed executor runs each call on real data, and the result summary goes back to the model before it plans the next step.</p>
+    </section>
+    <section>
+      <h2>Results</h2>
+      <table class="metrics">
+        <thead><tr><th>Agent</th><th>Task success</th><th>Avg. steps</th></tr></thead>
+        <tbody>
+          <tr><td>General LLM, no GIS tools</td><td>0.22</td><td>n/a</td></tr>
+          <tr><td>General LLM + tools</td><td>0.61</td><td>7.4</td></tr>
+          <tr class="best"><td>Ours (fine-tuned planner)</td><td>0.78</td><td>5.1</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:.6rem">Placeholder numbers. Replace them with your benchmark.</p>
+    </section>
+    <section>
+      <h2>Tool catalogue</h2>
+      <p><code>geocode</code>, <code>osm_query</code>, <code>stac_search</code>, <code>raster_calc</code>, <code>terrain_slope</code>, <code>buffer</code>, <code>overlay</code>, <code>isochrone</code>, <code>zonal_stats</code>, <code>summarize</code></p>
+    </section>
+  </div>
+  <footer class="site-footer">Imagery © Esri, Maxar, Earthstar Geographics.</footer>
+
+  <script src="../lib/maplibre-gl.js"></script>
+  <script>
+  const KISUMU = [34.7617, -0.0917];
+  const FC = (features) => ({ type: "FeatureCollection", features });
+  const circle = ([lon, lat], km, n = 64) => {
+    const c = []; for (let i = 0; i <= n; i++) { const a = (i / n) * 2 * Math.PI; c.push([lon + (km / (111.32 * Math.cos(lat * Math.PI / 180))) * Math.cos(a), lat + (km / 110.57) * Math.sin(a)]); }
+    return { type: "Feature", geometry: { type: "Polygon", coordinates: [c] }, properties: {} };
+  };
+  const poly = (pts, props = {}) => ({ type: "Feature", geometry: { type: "Polygon", coordinates: [[...pts, pts[0]]] }, properties: props });
+  const R = rng(7);
+
+  const ROAD = { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [[34.765, -0.095], [34.80, -0.11], [34.86, -0.14], [34.918, -0.174]] } };
+  const SITES = [
+    poly([[34.835, -0.096], [34.851, -0.094], [34.853, -0.108], [34.837, -0.110]], { name: "Site A", score: 0.91 }),
+    poly([[34.884, -0.118], [34.902, -0.116], [34.901, -0.131], [34.886, -0.133]], { name: "Site B", score: 0.86 }),
+    poly([[34.872, -0.182], [34.889, -0.180], [34.891, -0.196], [34.873, -0.197]], { name: "Site C", score: 0.79 })
+  ];
+  const GRID = [];
+  for (let x = 34.72; x < 34.92; x += 0.02) for (let y = -0.06; y < 0.08; y += 0.02) {
+    const v = Math.max(0, Math.min(1, 0.35 + 0.5 * Math.sin(x * 60) * Math.cos(y * 45) + (R() - 0.5) * 0.4));
+    GRID.push(poly([[x, y], [x + 0.019, y], [x + 0.019, y + 0.019], [x, y + 0.019]], { stress: +v.toFixed(2) }));
+  }
+  const FACILITIES = [];
+  for (let i = 0; i < 46; i++) { const a = R() * 2 * Math.PI, d = Math.sqrt(R()) * 4.2; FACILITIES.push({ type: "Feature", properties: { inside: d <= 2 }, geometry: { type: "Point", coordinates: [KISUMU[0] + (d / 111.3) * Math.cos(a), KISUMU[1] + (d / 110.6) * Math.sin(a)] } }); }
+  const nInside = FACILITIES.filter((f) => f.properties.inside).length;
+
+  const TASKS = [
+    { q: "Find flat, unforested land within 5 km of the main road east of Kisumu for a solar farm",
+      keys: ["solar", "flat", "farm", "site", "energy", "unforested"],
+      steps: [
+        { tool: "geocode", args: { place: "Kisumu, Kenya" }, out: "lon 34.762, lat -0.092", map: (m) => m.flyTo({ center: KISUMU, zoom: 11.5 }) },
+        { tool: "osm_query", args: { feature: "highway=trunk", near: "Kisumu", direction: "east" }, out: "1 road, 18.4 km", map: (m) => setLayer(m, "road", FC([ROAD]), "line", { "line-color": "#ffd166", "line-width": 4 }) },
+        { tool: "buffer", args: { layer: "road", distance_m: 5000 }, out: "polygon, 172 km²", map: (m) => setLayer(m, "buf", FC([ROAD]), "line", { "line-color": "#ffd166", "line-width": ["interpolate", ["exponential", 2], ["zoom"], 9, 20, 13, 300], "line-opacity": 0.18 }) },
+        { tool: "terrain_slope", args: { dem: "COP-DEM-30", max_slope_deg: 5, mask: "buffer" }, out: "flat area: 96 km²" },
+        { tool: "stac_search", args: { collection: "esa-worldcover-v2", bbox: "buffer" }, out: "1 item (10 m land cover)" },
+        { tool: "overlay", args: { keep: ["grassland", "bare", "shrubland"], exclude: ["tree cover", "built-up", "wetland"], min_area_ha: 100 }, out: "3 candidate sites", map: (m) => setLayer(m, "sites", FC(SITES), "fill", { "fill-color": "#ef6a80", "fill-opacity": 0.55, "fill-outline-color": "#fff" }) }
+      ],
+      answer: "I found 3 candidate sites within 5 km of the Kisumu–Ahero road on slopes under 5°, with no tree cover, buildings or wetland. Site A (about 2.6 km², 1.8 km from the road) ranks highest because it's closest to the grid substation. Sites B and C are larger but sit nearer seasonal flooding zones." },
+    { q: "Map cropland around Kisumu that looked water-stressed in the last dry season",
+      keys: ["crop", "stress", "drought", "ndvi", "dry", "water-stressed", "vegetation"],
+      steps: [
+        { tool: "geocode", args: { place: "Kisumu, Kenya", buffer_km: 12 }, out: "bbox 34.72, -0.06, 34.92, 0.08", map: (m) => m.flyTo({ center: [34.82, 0.01], zoom: 11 }) },
+        { tool: "stac_search", args: { collection: "sentinel-2-l2a", dates: "2026-01-01/2026-02-28", max_cloud: 20 }, out: "14 scenes" },
+        { tool: "raster_calc", args: { expr: "(B08 - B04) / (B08 + B04)", reduce: "median" }, out: "NDVI median, 10 m" },
+        { tool: "raster_calc", args: { expr: "(ndvi - ndvi_baseline_2018_2025) / std", name: "ndvi_anomaly" }, out: "anomaly range -2.9 … 1.4" },
+        { tool: "zonal_stats", args: { zones: "2 km grid", mask: "worldcover=cropland", stat: "share(anomaly < -1)" }, out: `${GRID.length} cells`, map: (m) => setLayer(m, "grid", FC(GRID), "fill", { "fill-color": ["interpolate", ["linear"], ["get", "stress"], 0, "#2a9d8f", 0.5, "#f4d35e", 1, "#c2364f"], "fill-opacity": 0.6, "fill-outline-color": "rgba(255,255,255,.5)" }) }
+      ],
+      answer: "About 31% of cropland in the area had NDVI more than one standard deviation below its 2018–2025 dry-season average. Stress is concentrated in the north-east cells (red), away from irrigation channels. Cells near the lake shore stayed close to normal." },
+    { q: "How many health facilities are within 2 km of Kisumu city centre?",
+      keys: ["health", "hospital", "clinic", "facilities", "within", "walking", "access"],
+      steps: [
+        { tool: "geocode", args: { place: "Kisumu city centre" }, out: "lon 34.762, lat -0.092", map: (m) => m.flyTo({ center: KISUMU, zoom: 12.6 }) },
+        { tool: "osm_query", args: { feature: "amenity in (hospital, clinic, doctors)", radius_km: 5 }, out: `${FACILITIES.length} facilities`, map: (m) => setLayer(m, "fac", FC(FACILITIES), "circle", { "circle-radius": 5, "circle-color": "#ffffff", "circle-stroke-color": "#13233a", "circle-stroke-width": 1.5 }) },
+        { tool: "isochrone", args: { from: "city centre", mode: "walk", distance_m: 2000 }, out: "polygon, 11.6 km²", map: (m) => setLayer(m, "iso", FC([circle(KISUMU, 2)]), "fill", { "fill-color": "#6fb3e0", "fill-opacity": 0.25, "fill-outline-color": "#6fb3e0" }) },
+        { tool: "overlay", args: { op: "points_in_polygon", points: "facilities", polygon: "isochrone" }, out: `${nInside} inside`, map: (m) => { setLayer(m, "fac", FC(FACILITIES), "circle", { "circle-radius": ["case", ["get", "inside"], 7, 4], "circle-color": ["case", ["get", "inside"], "#c2364f", "#ffffff"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 }); } }
+      ],
+      answer: `${nInside} of the ${FACILITIES.length} health facilities mapped in OpenStreetMap within 5 km are inside a 2 km walk of the city centre (red dots). Coverage is thinner to the north-east, where most facilities lie beyond the 2 km line.` }
+  ];
+
+  const map = new maplibregl.Map({ container: "map", style: rasterStyle(BASEMAPS.esri), center: KISUMU, zoom: 10, maxZoom: 18 });
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+  map.addControl(new maplibregl.ScaleControl(), "bottom-left");
+
+  const added = new Set();
+  function setLayer(m, id, data, type, paint) {
+    if (m.getLayer(id)) m.removeLayer(id);
+    if (m.getSource(id)) m.getSource(id).setData(data); else m.addSource(id, { type: "geojson", data });
+    m.addLayer({ id, type, source: id, paint });
+    added.add(id);
+  }
+  function clearLayers() { added.forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }); added.clear(); }
+
+  // Replace with a call to your agent API that streams tool calls.
+  function planFor(question) {
+    const ql = question.toLowerCase(); let best = null, s = 0;
+    TASKS.forEach((t) => { const k = t.keys.filter((w) => ql.includes(w)).length; if (k > s) { s = k; best = t; } });
+    return best;
+  }
+
+  let running = false;
+  async function run(question) {
+    if (running || !question.trim()) return;
+    const task = planFor(question);
+    const trace = document.getElementById("trace"), ans = document.getElementById("answer");
+    ans.innerHTML = "";
+    if (!task) { trace.innerHTML = ""; ans.innerHTML = `<div class="answer-box">This demo replays 3 recorded traces, so it can't plan new questions yet. Try one of the suggestions, or connect a live agent in <code>planFor()</code>.</div>`; return; }
+    running = true; clearLayers();
+    trace.innerHTML = task.steps.map((s) => `<li><span class="tool">${s.tool}</span><code>${esc(JSON.stringify(s.args))}</code><div class="muted out" style="font-size:.85rem;margin-top:.2rem"></div></li>`).join("");
+    const items = [...trace.children];
+    for (let i = 0; i < task.steps.length; i++) {
+      const s = task.steps[i], li = items[i];
+      li.classList.add("running");
+      li.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+      await sleep(reducedMotion ? 100 : 700 + Math.random() * 500);
+      if (s.map) s.map(map);
+      li.querySelector(".out").textContent = `Result: ${s.out}`;
+      li.classList.replace("running", "done");
+    }
+    ans.innerHTML = `<div class="answer-box"><strong>Answer</strong><p style="margin:.3rem 0 0"></p></div>`;
+    await typeInto(ans.querySelector("p"), task.answer);
+    running = false;
+  }
+  document.getElementById("suggest").innerHTML = TASKS.map((t, i) => `<button type="button" data-i="${i}">${esc(t.q)}</button>`).join("");
+  document.getElementById("suggest").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { document.getElementById("q").value = TASKS[b.dataset.i].q; run(TASKS[b.dataset.i].q); } });
+  document.getElementById("ask").addEventListener("submit", (e) => { e.preventDefault(); run(document.getElementById("q").value); });
+  </script>
+</body>
+</html>

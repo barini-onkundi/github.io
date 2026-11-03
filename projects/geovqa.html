@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ask the image: GeoLLM visual question answering</title>
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../lib/maplibre-gl.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="../assets/js/common.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="inner">
+    <a class="brand" href="../index.html">Portfolio</a>
+    <nav class="nav"><a href="geovqa.html" class="active">Ask the image</a><a href="change.html">What changed?</a><a href="embeddings.html">Search in words</a><a href="agent.html">Geospatial agent</a></nav>
+    <button class="theme-btn" type="button">☾</button>
+  </div></header>
+
+  <div class="proj-head">
+    <a class="back" href="../index.html#projects">Back to all projects</a>
+    <h1>Ask the image</h1>
+    <p class="lede">A vision-language model fine-tuned on satellite imagery answers questions about a scene and draws boxes around the evidence it used.</p>
+    <span class="demo-note">Demo with pre-computed answers over Nairobi. Swap in your model's outputs or API.</span>
+  </div>
+
+  <div class="workspace">
+    <div class="map" id="map"></div>
+    <aside class="panel" aria-label="Chat with the model">
+      <div class="panel-head">Ask a question about this scene</div>
+      <div class="panel-body" id="chat" aria-live="polite">
+        <div class="msg bot"><div class="who">GeoVQA</div>I can see a 30 × 25 km scene of Nairobi. Pick a question below or type your own.</div>
+      </div>
+      <div class="panel-foot">
+        <div class="suggest" id="suggest"></div>
+        <form class="ask" id="ask">
+          <input id="q" placeholder="e.g. Where is the airport?" aria-label="Your question" autocomplete="off">
+          <button class="btn primary" type="submit">Ask</button>
+        </form>
+      </div>
+    </aside>
+  </div>
+
+  <div class="proj-body">
+    <section>
+      <h2>Approach</h2>
+      <p>A CLIP-style vision encoder pre-trained on satellite image–caption pairs feeds a language model through a projection layer. The model outputs text plus bounding boxes in image coordinates, which are converted to map coordinates for display.</p>
+      <p>Training data: replace this paragraph with your datasets (for example RSVQA, GeoChat-Instruct or your own labelled tiles).</p>
+    </section>
+    <section>
+      <h2>Results</h2>
+      <table class="metrics">
+        <thead><tr><th>Model</th><th>Accuracy</th><th>Grounding mIoU</th></tr></thead>
+        <tbody>
+          <tr><td>General VLM, zero-shot</td><td>0.58</td><td>0.21</td></tr>
+          <tr><td>RS baseline</td><td>0.71</td><td>0.38</td></tr>
+          <tr class="best"><td>Ours</td><td>0.82</td><td>0.54</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:.6rem">Placeholder numbers. Replace them with your evaluation.</p>
+    </section>
+    <section>
+      <h2>Links</h2>
+      <p><a class="btn" href="https://github.com/barini-onkundi" target="_blank" rel="noopener">Code on GitHub</a></p>
+      <p class="muted">To run a live model, host it on Hugging Face Spaces and call it from <code>askModel()</code> in this page.</p>
+    </section>
+  </div>
+  <footer class="site-footer">Imagery © Esri, Maxar, Earthstar Geographics.</footer>
+
+  <script src="../lib/maplibre-gl.js"></script>
+  <script>
+  // ---- Pre-computed answers (replace with your model's outputs) ----
+  const QA = [
+    { q: "Where is the airport?", keys: ["airport", "runway", "jkia", "plane", "aircraft"],
+      a: "The airport is in the south-east of the scene: a long east–west runway with terminal buildings on its northern side. I'm highlighting the runway and apron area.",
+      conf: 0.94, fit: [[36.895, -1.345], [36.96, -1.295]],
+      boxes: [{ b: [36.900, -1.335, 36.952, -1.305], label: "Airport" }] },
+    { q: "How much of the scene is protected green space?", keys: ["green", "park", "vegetation", "forest", "protected", "grass"],
+      a: "A large block of open savanna south of the city covers roughly 117 km², about 15% of the scene. It's bounded by dense urban fabric on its northern edge, a sharp land-cover boundary.",
+      conf: 0.88, fit: [[36.75, -1.46], [36.96, -1.32]],
+      boxes: [{ b: [36.78, -1.44, 36.93, -1.345], label: "Protected savanna" }] },
+    { q: "Find the central business district", keys: ["cbd", "downtown", "centre", "center", "business", "tall"],
+      a: "The densest cluster of tall buildings, with long shadows and little vegetation, sits just north-west of the scene's centre. That's the central business district.",
+      conf: 0.91, fit: [[36.80, -1.30], [36.84, -1.27]],
+      boxes: [{ b: [36.812, -1.292, 36.830, -1.278], label: "CBD" }] },
+    { q: "How many stadiums can you see?", keys: ["stadium", "stadiums", "sport", "football", "count"],
+      a: "I count 2 large stadiums: one in the north-east of the city and a smaller one south of the city centre. Both show the typical oval track and stands.",
+      conf: 0.83, fit: [[36.80, -1.32], [36.91, -1.21]],
+      boxes: [{ b: [36.886, -1.232, 36.897, -1.223], label: "Stadium 1" }, { b: [36.820, -1.309, 36.829, -1.300], label: "Stadium 2" }] },
+    { q: "Where is the densest housing?", keys: ["housing", "dense", "settlement", "residential", "informal", "homes"],
+      a: "The highest roof density, with very small buildings and almost no open space, is in the south-west of the city. Building footprints there are under 30 m² on average.",
+      conf: 0.79, fit: [[36.76, -1.33], [36.81, -1.30]],
+      boxes: [{ b: [36.775, -1.322, 36.800, -1.305], label: "Dense housing" }] }
+  ];
+
+  const map = new maplibregl.Map({
+    container: "map", style: rasterStyle(BASEMAPS.esri), center: [36.85, -1.31], zoom: 10.6, maxZoom: 18
+  });
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+  map.addControl(new maplibregl.ScaleControl(), "bottom-left");
+
+  let labelMarkers = [];
+  map.on("load", () => {
+    map.addSource("boxes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({ id: "box-fill", type: "fill", source: "boxes", paint: { "fill-color": "#ef6a80", "fill-opacity": 0.18 } });
+    map.addLayer({ id: "box-line", type: "line", source: "boxes", paint: { "line-color": "#ffffff", "line-width": 3 } });
+    map.addLayer({ id: "box-line2", type: "line", source: "boxes", paint: { "line-color": "#c2364f", "line-width": 1.5, "line-dasharray": [2, 1] } });
+  });
+
+  function showBoxes(item) {
+    labelMarkers.forEach((m) => m.remove()); labelMarkers = [];
+    const feats = item.boxes.map(({ b }) => ({ type: "Feature", geometry: { type: "Polygon", coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]] } }));
+    map.getSource("boxes").setData({ type: "FeatureCollection", features: feats });
+    item.boxes.forEach(({ b, label }) => {
+      const el = document.createElement("div");
+      el.textContent = label;
+      el.style.cssText = "background:#c2364f;color:#fff;font:600 12px var(--font);padding:2px 6px;border-radius:3px;white-space:nowrap";
+      labelMarkers.push(new maplibregl.Marker({ element: el, anchor: "bottom-left" }).setLngLat([b[0], b[3]]).addTo(map));
+    });
+    map.fitBounds(item.fit, { padding: 40, duration: reducedMotion ? 0 : 1800 });
+  }
+
+  // Replace this with a fetch() to your hosted model to make the demo live.
+  async function askModel(question) {
+    const ql = question.toLowerCase();
+    let best = null, score = 0;
+    QA.forEach((it) => { const s = it.keys.filter((k) => ql.includes(k)).length; if (s > score) { score = s; best = it; } });
+    await sleep(500);
+    return best || { a: "This demo only answers the suggested questions, because answers are pre-computed. Connect a hosted model in askModel() to answer anything.", boxes: [] };
+  }
+
+  const chat = document.getElementById("chat");
+  let busy = false;
+  async function ask(question) {
+    if (busy || !question.trim()) return; busy = true;
+    chat.insertAdjacentHTML("beforeend", `<div class="msg user">${esc(question)}</div>`);
+    chat.insertAdjacentHTML("beforeend", `<div class="msg bot"><div class="who">GeoVQA</div><div class="txt cursor-blink"></div></div>`);
+    const txt = chat.lastElementChild.querySelector(".txt");
+    chat.scrollTop = chat.scrollHeight;
+    const res = await askModel(question);
+    if (res.boxes && res.boxes.length) showBoxes(res);
+    await typeInto(txt, res.a);
+    if (res.conf) txt.insertAdjacentHTML("afterend", `<div class="muted num" style="font-size:.8rem;margin-top:.3rem">Confidence ${res.conf.toFixed(2)}, ${res.boxes.length} region${res.boxes.length > 1 ? "s" : ""} grounded</div>`);
+    chat.scrollTop = chat.scrollHeight;
+    busy = false;
+  }
+  document.getElementById("suggest").innerHTML = QA.map((it, i) => `<button type="button" data-i="${i}">${esc(it.q)}</button>`).join("");
+  document.getElementById("suggest").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) ask(QA[b.dataset.i].q); });
+  document.getElementById("ask").addEventListener("submit", (e) => { e.preventDefault(); const q = document.getElementById("q"); ask(q.value); q.value = ""; });
+  </script>
+</body>
+</html>
